@@ -1,52 +1,72 @@
-﻿var data = File.ReadAllLines("data.txt");
-var questions = data.Select(line => line.Split("*")).Select(arr => (arr[0], arr[1])).ToList();
+﻿using Telegram.Bot;
+using Telegram.Bot.Exceptions;
+using Telegram.Bot.Extensions.Polling;
+using Telegram.Bot.Types;
+using Telegram.Bot.Types.Enums;
+using Bot;
 
-var random = new Random();
-while (true)
+const string token = " *YOUR TOKEN* ";
+
+var botClient = new TelegramBotClient(token);
+
+using var cts = new CancellationTokenSource();
+
+// StartReceiving does not block the caller thread. Receiving is done on the ThreadPool.
+var receiverOptions = new ReceiverOptions
 {
-    var ask = questions[random.Next(questions.Count)];
-    Console.WriteLine(ask.Item1);
+    AllowedUpdates = { } // receive all update types
+};
+botClient.StartReceiving(HandleUpdateAsync, HandleErrorAsync, receiverOptions, cancellationToken: cts.Token);
 
-    int count = 0;
-    string answer = string.Empty, helpWord = string.Empty;
-    for (int i = 0; i < ask.Item2.Length; i++)
+var me = await botClient.GetMeAsync();
+Console.WriteLine($"Start listening for /{me.Username}");
+Console.ReadLine();
+
+// Send cancellation request to stop bot
+cts.Cancel();
+
+async Task HandleUpdateAsync(ITelegramBotClient botClient, Update update, CancellationToken cancellationToken)
+{
+    // Only process Message updates: https://core.telegram.org/bots/api#message
+    if (update.Type != UpdateType.Message)
+        return;
+    // Only process text messages
+    if (update.Message!.Type != MessageType.Text)
+        return;
+
+    var chatId = update.Message.Chat.Id;
+    var messageText = update.Message.Text;
+
+    Console.WriteLine($"Received a '{messageText}' message in chat {chatId}.");
+
+    string botMessage = string.Empty;
+
+    if (QuestionData.ToStart)
     {
-        helpWord += "_";
+        botMessage = QuestionData.GetQuestion();
+    }
+    else
+    {
+        botMessage = "подсказка: " + QuestionData.GetHint();
     }
 
-    while (count < ask.Item2.Length)
-    {
-        helpWord = Help(ask.Item2, helpWord);
-        Console.WriteLine(helpWord);
-        answer = Console.ReadLine();
-        if (answer.ToLower() == ask.Item2)
-        {
-            Console.WriteLine("Верный ответ!");
-            break;
-        }
-        else
-        {
-            Console.WriteLine("Неверный ответ!");
-        }
+    // Echo received message text
+    Message sentMessage = await botClient.SendTextMessageAsync(
+        chatId: chatId,
+        text: botMessage,
+        cancellationToken: cancellationToken);
 
-        count++;
-    }
 }
 
-static string Help(string word, string helpWord)
+Task HandleErrorAsync(ITelegramBotClient botClient, Exception exception, CancellationToken cancellationToken)
 {
-    int size = word.Length;
-    var random = new Random();
-    int x = helpWord.Length;
-    while (true)
+    var ErrorMessage = exception switch
     {
-        int randValue = random.Next(size);
-        if (word[randValue] != helpWord[randValue])
-        {
-            helpWord = helpWord.Insert(randValue, word[randValue].ToString());
-            helpWord = helpWord.Remove(randValue+1, 1);
-            break;
-        }
-    }
-    return helpWord;
+        ApiRequestException apiRequestException
+            => $"Telegram API Error:\n[{apiRequestException.ErrorCode}]\n{apiRequestException.Message}",
+        _ => exception.ToString()
+    };
+
+    Console.WriteLine(ErrorMessage);
+    return Task.CompletedTask;
 }
